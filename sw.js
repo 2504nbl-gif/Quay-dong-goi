@@ -1,6 +1,6 @@
 // Cho app mở được khi mất mạng: ưu tiên bản mới trên mạng, mất mạng thì dùng bản đã lưu.
-const CACHE = 'qdg-v2';
-const FILES = ['./', 'index.html', 'vendor/zxing.min.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
+const CACHE = 'qdg-v3';
+const FILES = ['./', 'index.html', 'vendor/zxing.min.js', 'scan-worker.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(self.clients.claim()); });
 self.addEventListener('fetch', e => {
