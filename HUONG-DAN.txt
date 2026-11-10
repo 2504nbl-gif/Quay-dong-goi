@@ -1,0 +1,9 @@
+QUAY ĐÓNG GÓI – bản chạy thử trên điện thoại Android (Chrome)
+
+1. Đưa cả thư mục này lên một địa chỉ https:// (ví dụ thư mục con trên website của anh).
+   Camera chỉ mở được khi trang chạy bằng https.
+2. Trên điện thoại, mở địa chỉ đó bằng Chrome, bấm "Cho phép" khi hỏi quyền Camera.
+3. Vào menu Chrome > "Thêm vào màn hình chính" để có biểu tượng app, mở toàn màn hình.
+4. Vào tab Cài đặt, nhập tên shop, rồi quay lại tab Quay và đưa tem vận đơn vào camera.
+
+Lưu ý: video nằm trong bộ nhớ của Chrome trên máy đó. Không xoá dữ liệu Chrome / gỡ app khi chưa tải video cần giữ.

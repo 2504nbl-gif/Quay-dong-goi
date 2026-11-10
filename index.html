@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<meta name="theme-color" content="#0f5132">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<title>Quay Đóng Gói</title>
+<style>
+:root{--green:#0f5132;--green2:#198754;--bg:#101412;--card:#1b211e;--line:#2c3530;--text:#eef3f0;--mute:#9aa8a0;--red:#dc3545;--amber:#ffc107}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body{display:flex;flex-direction:column}
+button,input,select{font:inherit}
+nav{display:flex;background:var(--green);flex:none}
+nav button{flex:1;padding:12px 4px;background:none;border:0;color:#cfe3d8;font-weight:600;border-bottom:3px solid transparent}
+nav button.on{color:#fff;border-bottom-color:#fff}
+main{flex:1;min-height:0;display:flex;flex-direction:column}
+section{display:none;flex:1;min-height:0;flex-direction:column}
+section.on{display:flex}
+.stage{position:relative;flex:1;min-height:0;background:#000;display:flex;align-items:center;justify-content:center}
+#view{max-width:100%;max-height:100%;display:block}
+#camErr{position:absolute;inset:0;display:none;align-items:center;justify-content:center;padding:24px;text-align:center;color:#ffd7d7}
+.bar{flex:none;padding:10px 12px;background:var(--card);border-top:1px solid var(--line)}
+#state{font-weight:700;font-size:18px;margin-bottom:8px;min-height:25px;word-break:break-all}
+#state.rec{color:#ff6b6b}
+#state.find{color:var(--amber)}
+.row{display:flex;gap:8px}
+.btn{flex:1;padding:14px 10px;border:0;border-radius:10px;background:#34403a;color:#fff;font-weight:600}
+.btn.red{background:var(--red)}
+.btn.green{background:var(--green2)}
+.btn.line{background:none;border:1px solid var(--line)}
+.btn:disabled{opacity:.4}
+.pad{padding:12px;overflow:auto;flex:1;min-height:0}
+.field{margin-bottom:14px}
+.field label{display:block;color:var(--mute);font-size:14px;margin-bottom:4px}
+.field input[type=text],.field input[type=number],.field select,#q{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:#0c100e;color:var(--text)}
+.check{display:flex;align-items:center;gap:10px}
+.check input{width:22px;height:22px}
+.searchbar{flex:none;padding:10px 12px;background:var(--card);border-bottom:1px solid var(--line)}
+.day{color:var(--mute);font-size:14px;margin:14px 0 6px}
+.item{display:flex;align-items:center;gap:10px;padding:12px;background:var(--card);border-radius:10px;margin-bottom:6px}
+.item b{word-break:break-all}
+.item small{color:var(--mute);display:block}
+.item .go{margin-left:auto;color:var(--mute);font-size:22px}
+#usage{color:var(--mute);font-size:13px;margin-top:8px}
+#toast{position:fixed;left:50%;top:60px;transform:translateX(-50%);background:#000d;color:#fff;padding:10px 16px;border-radius:20px;display:none;z-index:9;max-width:90%;text-align:center}
+#player{position:fixed;inset:0;background:#000;z-index:8;display:none;flex-direction:column}
+#player video{flex:1;min-height:0;width:100%;background:#000}
+#player .bar b{display:block;margin-bottom:8px;word-break:break-all}
+#ask{position:fixed;inset:0;background:#000a;z-index:10;display:none;align-items:center;justify-content:center;padding:20px}
+#ask .box{background:var(--card);padding:18px;border-radius:14px;width:100%;max-width:420px}
+#ask p{margin:0 0 12px}
+#ask input{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:#0c100e;color:var(--text);margin-bottom:12px}
+#logoPrev{max-height:48px;display:block;margin-top:8px}
+.note{color:var(--mute);font-size:13px}
+</style>
+</head>
+<body>
+<nav>
+  <button data-tab="rec" class="on">Quay</button>
+  <button data-tab="find">Tra cứu</button>
+  <button data-tab="set">Cài đặt</button>
+</nav>
+<main>
+  <section id="tab-rec" class="on">
+    <div class="stage">
+      <canvas id="view" width="1280" height="720"></canvas>
+      <video id="cam" playsinline muted style="display:none"></video>
+      <div id="camErr"></div>
+    </div>
+    <div class="bar">
+      <div id="state">Đang mở camera…</div>
+      <div class="row">
+        <button class="btn" id="btnManual">Nhập mã tay</button>
+        <button class="btn red" id="btnStop" disabled>Dừng &amp; lưu</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-find">
+    <div class="searchbar">
+      <input id="q" type="text" inputmode="search" placeholder="Gõ mã vận đơn để tìm…" autocomplete="off">
+      <div class="row" style="margin-top:8px">
+        <button class="btn green" id="btnScanFind">Quét tem để tìm</button>
+      </div>
+      <div id="usage"></div>
+    </div>
+    <div class="pad" id="list"></div>
+  </section>
+
+  <section id="tab-set">
+    <div class="pad">
+      <div class="field"><label>Tên shop (đóng dấu lên video)</label><input type="text" id="sShop" maxlength="40"></div>
+      <div class="field"><label>Logo shop (không bắt buộc)</label>
+        <input type="file" id="sLogo" accept="image/*">
+        <img id="logoPrev" alt="" hidden>
+        <button class="btn line" id="sLogoDel" style="margin-top:8px" hidden>Bỏ logo</button>
+      </div>
+      <div class="field"><label>Độ phân giải quay</label>
+        <select id="sRes"><option value="720">720p (nhẹ máy, khuyên dùng)</option><option value="1080">1080p (nét hơn, nóng máy hơn)</option></select>
+      </div>
+      <div class="field"><label>Giữ video trong bao nhiêu ngày</label><input type="number" id="sKeep" min="1" max="365"></div>
+      <div class="field"><label>Tự dừng nếu một đơn quay quá (phút)</label><input type="number" id="sMax" min="1" max="60"></div>
+      <div class="field check"><input type="checkbox" id="sQR"><label for="sQR" style="margin:0;color:var(--text)">Nhận cả mã QR (mặc định chỉ đọc mã vạch)</label></div>
+      <button class="btn green" id="sSave" style="width:100%">Lưu cài đặt</button>
+      <p class="note" id="about"></p>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+
+<div id="player">
+  <video id="pv" controls playsinline></video>
+  <div class="bar">
+    <b id="pTitle"></b>
+    <div class="row">
+      <button class="btn green" id="pShare">Chia sẻ</button>
+      <button class="btn" id="pSave">Tải về</button>
+      <button class="btn red" id="pDel">Xoá</button>
+      <button class="btn line" id="pClose">Đóng</button>
+    </div>
+  </div>
+</div>
+
+<div id="ask"><div class="box">
+  <p id="askText"></p>
+  <input id="askInput" type="text" autocomplete="off" autocapitalize="characters">
+  <div class="row"><button class="btn line" id="askNo">Huỷ</button><button class="btn green" id="askYes">Đồng ý</button></div>
+</div></div>
+
+<script src="vendor/zxing.min.js"></script>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const pad2 = n => String(n).padStart(2, '0');
+
+/* ---------- Cài đặt ---------- */
+const DEF = {shop: '', logo: '', res: '720', keepDays: 14, maxMin: 10, acceptQR: false};
+let cfg = Object.assign({}, DEF);
+try { Object.assign(cfg, JSON.parse(localStorage.getItem('qdg-cfg') || '{}')); } catch (e) {}
+function saveCfg() { try { localStorage.setItem('qdg-cfg', JSON.stringify(cfg)); } catch (e) {} }
+let logoImg = null;
+function loadLogo() {
+  logoImg = null;
+  $('logoPrev').hidden = $('sLogoDel').hidden = !cfg.logo;
+  if (!cfg.logo) return;
+  const im = new Image();
+  im.onload = () => { logoImg = im; };
+  im.src = cfg.logo;
+  $('logoPrev').src = cfg.logo;
+}
+
+/* ---------- Tiện ích giao diện ---------- */
+let toastTimer;
+function toast(msg, ms) {
+  const t = $('toast'); t.textContent = msg; t.style.display = 'block';
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.style.display = 'none'; }, ms || 2500);
+}
+function ask(text, withInput) {
+  return new Promise(res => {
+    $('askText').textContent = text;
+    const inp = $('askInput'); inp.style.display = withInput ? 'block' : 'none'; inp.value = '';
+    $('ask').style.display = 'flex';
+    if (withInput) inp.focus();
+    const done = v => { $('ask').style.display = 'none'; $('askYes').onclick = $('askNo').onclick = null; res(v); };
+    $('askYes').onclick = () => done(withInput ? inp.value.trim() : true);
+    $('askNo').onclick = () => done(withInput ? '' : false);
+  });
+}
+let audioCtx;
+function beep(freq, ms) {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.value = freq || 1800; g.gain.value = 0.25;
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + (ms || 120) / 1000);
+  } catch (e) {}
+  try { navigator.vibrate && navigator.vibrate(80); } catch (e) {}
+}
+function fmtDur(ms) { const s = Math.round(ms / 1000); return pad2(Math.floor(s / 60)) + ':' + pad2(s % 60); }
+function fmtSize(b) { return b > 1e9 ? (b / 1e9).toFixed(1) + ' GB' : (b / 1e6).toFixed(1) + ' MB'; }
+function stamp(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()); }
+function dayKey(ts) { return stamp(new Date(ts)).slice(0, 10); }
+
+/* ---------- Kho lưu (IndexedDB): meta tách khỏi blob để liệt kê nhanh ---------- */
+let db;
+function openDB() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('qdg', 1);
+    r.onupgradeneeded = () => {
+      r.result.createObjectStore('meta', {keyPath: 'id'});
+      r.result.createObjectStore('blob', {keyPath: 'id'});
+    };
+    r.onsuccess = () => { db = r.result; res(); };
+    r.onerror = () => rej(r.error);
+  });
+}
+function tx(stores, mode, fn) {
+  return new Promise((res, rej) => {
+    const t = db.transaction(stores, mode); let out;
+    t.oncomplete = () => res(out); t.onerror = t.onabort = () => rej(t.error);
+    out = fn(t);
+  });
+}
+function reqP(r) { return new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+function putVideo(meta, blob) { return tx(['meta', 'blob'], 'readwrite', t => { t.objectStore('meta').put(meta); t.objectStore('blob').put({id: meta.id, blob}); }); }
+function delVideo(id) { return tx(['meta', 'blob'], 'readwrite', t => { t.objectStore('meta').delete(id); t.objectStore('blob').delete(id); }); }
+function allMeta() { return reqP(db.transaction('meta').objectStore('meta').getAll()); }
+function getBlob(id) { return reqP(db.transaction('blob').objectStore('blob').get(id)).then(r => r && r.blob); }
+
+/* Tự dọn: xoá video quá hạn; nếu bộ nhớ dùng > 85% thì xoá bản cũ nhất cho tới khi còn ~75% */
+async function cleanup() {
+  let metas = (await allMeta()).sort((a, b) => a.startedAt - b.startedAt);
+  const limit = Date.now() - cfg.keepDays * 86400e3;
+  let removed = 0;
+  for (const m of metas.filter(m => m.startedAt < limit)) { await delVideo(m.id); removed++; }
+  metas = metas.filter(m => m.startedAt >= limit);
+  try {
+    const est = await navigator.storage.estimate();
+    if (est.quota && est.usage / est.quota > 0.85) {
+      let need = est.usage - est.quota * 0.75;
+      for (const m of metas) { if (need <= 0) break; await delVideo(m.id); need -= m.size; removed++; }
+    }
+  } catch (e) {}
+  return removed;
+}
+
+/* ---------- Camera + khung hình đóng dấu ---------- */
+const cam = $('cam'), view = $('view'), ctx = view.getContext('2d');
+let camReady = false, camStream = null;
+async function startCamera() {
+  camReady = false;
+  if (camStream) camStream.getTracks().forEach(t => t.stop());
+  const h = cfg.res === '1080' ? 1080 : 720, w = Math.round(h * 16 / 9);
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('NO_API');
+    camStream = await navigator.mediaDevices.getUserMedia({audio: false, video: {facingMode: {ideal: 'environment'}, width: {ideal: w}, height: {ideal: h}, frameRate: {ideal: 30}}});
+    cam.srcObject = camStream;
+    await cam.play();
+    view.width = cam.videoWidth; view.height = cam.videoHeight;
+    camReady = true;
+    $('camErr').style.display = 'none';
+    setState();
+  } catch (e) {
+    const el = $('camErr'); el.style.display = 'flex';
+    el.textContent = e.message === 'NO_API' || !window.isSecureContext
+      ? 'Không mở được camera: trang phải chạy bằng địa chỉ https:// (hoặc localhost).'
+      : 'Không mở được camera (' + (e.name || e.message) + '). Kiểm tra quyền Camera của trình duyệt cho trang này rồi tải lại.';
+    $('state').textContent = 'Chưa có camera';
+  }
+}
+function outlined(text, x, y, align) {
+  ctx.textAlign = align; ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.strokeText(text, x, y);
+  ctx.fillStyle = '#fff'; ctx.fillText(text, x, y);
+}
+function draw() {
+  requestAnimationFrame(draw);
+  if (!camReady) return;
+  const w = view.width, h = view.height, u = Math.min(w, h);
+  ctx.drawImage(cam, 0, 0, w, h);
+  const fs = Math.round(u * 0.04), m = Math.round(u * 0.025);
+  ctx.font = '600 ' + fs + 'px system-ui,sans-serif'; ctx.lineWidth = Math.max(3, fs / 6); ctx.textBaseline = 'alphabetic';
+  outlined(stamp(new Date()), w - m, m + fs, 'right');
+  if (cur) {
+    outlined('Mã: ' + cur.code + (cfg.shop ? ' | Shop: ' + cfg.shop : ''), m, h - m, 'left');
+    ctx.fillStyle = '#f33'; ctx.beginPath(); ctx.arc(m + fs * 0.4, m + fs * 0.65, fs * 0.35, 0, 7); ctx.fill();
+    outlined(fmtDur(Date.now() - cur.startedAt), m + fs, m + fs, 'left');
+  }
+  if (logoImg) {
+    const lh = u * 0.09, lw = lh * logoImg.width / logoImg.height;
+    ctx.globalAlpha = 0.9; ctx.drawImage(logoImg, w - m - lw, h - m - lh - (cur ? 0 : 0), lw, lh); ctx.globalAlpha = 1;
+  }
+}
+
+/* ---------- Đọc mã: dùng bộ đọc sẵn của Chrome, không có thì dùng ZXing kèm theo ---------- */
+const ONE_D = ['code_128', 'code_39', 'code_93', 'itf', 'codabar'];
+const CODE_RE = /^[A-Z0-9][A-Z0-9\-]{7,29}$/i;   // mã vận đơn: 8–30 ký tự chữ/số
+let native = null, zx = null, zxCanvas = null, zxTurn = 0, engine = '';
+async function initScanner() {
+  native = null; zx = null;
+  if ('BarcodeDetector' in window) {
+    try {
+      const sup = await BarcodeDetector.getSupportedFormats();
+      const want = ONE_D.concat(cfg.acceptQR ? ['qr_code'] : []).filter(f => sup.includes(f));
+      if (want.includes('code_128')) { native = new BarcodeDetector({formats: want}); engine = 'Chrome'; return; }
+    } catch (e) {}
+  }
+  const Z = window.ZXing, hints = new Map();
+  const fm = [Z.BarcodeFormat.CODE_128, Z.BarcodeFormat.CODE_39, Z.BarcodeFormat.CODE_93, Z.BarcodeFormat.ITF, Z.BarcodeFormat.CODABAR];
+  if (cfg.acceptQR) fm.push(Z.BarcodeFormat.QR_CODE);
+  hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, fm); hints.set(Z.DecodeHintType.TRY_HARDER, true);
+  zx = new Z.MultiFormatReader(); zx.setHints(hints);
+  zxCanvas = document.createElement('canvas'); engine = 'ZXing';
+}
+async function detectOnce() {
+  if (native) {
+    const rs = await native.detect(cam);
+    let best = null, bestScore = -1;
+    for (const r of rs) {
+      const v = (r.rawValue || '').trim();
+      if (!CODE_RE.test(v)) continue;
+      const b = r.boundingBox || {width: 0, height: 0};
+      // ưu tiên mã vạch hơn QR, rồi tới mã to nhất trong hình (mã vận đơn chính)
+      const score = (r.format === 'qr_code' ? 0 : 1e9) + b.width * b.height;
+      if (score > bestScore) { bestScore = score; best = v; }
+    }
+    return best;
+  }
+  // ZXing: lượt chẵn đọc hình thẳng, lượt lẻ xoay 90° để đọc tem đặt dọc
+  const vw = cam.videoWidth, vh = cam.videoHeight, rot = (zxTurn++ % 2) === 1;
+  zxCanvas.width = rot ? vh : vw; zxCanvas.height = rot ? vw : vh;
+  const c = zxCanvas.getContext('2d', {willReadFrequently: true});
+  if (rot) { c.translate(vh, 0); c.rotate(Math.PI / 2); }
+  c.drawImage(cam, 0, 0, vw, vh);
+  try {
+    const Z = window.ZXing;
+    const bmp = new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(zxCanvas)));
+    const v = zx.decodeWithState(bmp).getText().trim();
+    return CODE_RE.test(v) ? v : null;
+  } catch (e) { return null; }
+}
+let scanBusy = false, lastSeen = '', lastSeenAt = 0;
+async function scanTick() {
+  if (!camReady || scanBusy || saving || document.hidden) return;
+  scanBusy = true;
+  try {
+    const v = await detectOnce();
+    if (v) {
+      // phải đọc ra cùng một mã 2 lần liên tiếp mới nhận, tránh đọc nhầm
+      const ok = v === lastSeen && Date.now() - lastSeenAt < 2000;
+      lastSeen = v; lastSeenAt = Date.now();
+      if (ok) await onCode(v.toUpperCase());
+    }
+  } catch (e) {} finally { scanBusy = false; }
+}
+
+/* ---------- Quay theo đơn ---------- */
+let cur = null, rec = null, chunks = [], saving = false, blocked = '', blockedToastAt = 0, findMode = false, maxTimer = null;
+function pickMime() {
+  const c = ['video/mp4;codecs=avc1.42E01E', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+  return c.find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || '';
+}
+function setState() {
+  const s = $('state'); s.className = '';
+  if (findMode) { s.textContent = 'Đưa tem vào camera để tìm video…'; s.className = 'find'; }
+  else if (cur) { s.textContent = '● Đang quay đơn ' + cur.code; s.className = 'rec'; }
+  else if (camReady) s.textContent = 'Sẵn sàng – đưa tem vận đơn vào camera';
+  $('btnStop').disabled = !cur;
+}
+async function onCode(code) {
+  if (findMode) {
+    findMode = false; beep(1200); $('q').value = code; showTab('find'); await renderList(); setState(); return;
+  }
+  if (cur && cur.code === code) return;
+  if (code === blocked) {
+    if (Date.now() - blockedToastAt > 8000) { blockedToastAt = Date.now(); toast('Đơn ' + code + ' vừa quay xong. Muốn quay lại thì bấm "Nhập mã tay".'); }
+    return;
+  }
+  if (cur) await stopAndSave();
+  startRec(code);
+}
+function startRec(code) {
+  const mime = pickMime();
+  if (!window.MediaRecorder || !view.captureStream) { toast('Trình duyệt này không hỗ trợ quay video. Hãy dùng Chrome.', 5000); return; }
+  blocked = '';
+  chunks = [];
+  rec = new MediaRecorder(view.captureStream(25), mime ? {mimeType: mime, videoBitsPerSecond: cfg.res === '1080' ? 4e6 : 2.5e6} : undefined);
+  rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  rec.start(1000);
+  cur = {code, startedAt: Date.now(), mime: rec.mimeType || mime || 'video/webm'};
+  clearTimeout(maxTimer);
+  maxTimer = setTimeout(() => { if (cur && cur.code === code) { toast('Đơn ' + code + ' quay quá ' + cfg.maxMin + ' phút, đã tự dừng và lưu.', 5000); stopAndSave(true); } }, cfg.maxMin * 60e3);
+  beep(1800); setState();
+}
+function stopAndSave(block) {
+  if (!cur || !rec) return Promise.resolve();
+  saving = true; clearTimeout(maxTimer);
+  const job = cur, r = rec;
+  return new Promise(res => {
+    r.onstop = async () => {
+      const blob = new Blob(chunks, {type: job.mime.split(';')[0]});
+      chunks = [];
+      const meta = {id: job.startedAt + '-' + job.code, code: job.code, startedAt: job.startedAt, durationMs: Date.now() - job.startedAt, size: blob.size, mime: blob.type};
+      try {
+        await putVideo(meta, blob);
+        await cleanup();
+      } catch (e) { toast('LỖI: không lưu được video đơn ' + job.code + ' (' + (e && e.name) + '). Kiểm tra bộ nhớ máy.', 8000); beep(400, 600); }
+      if (block) { blocked = job.code; blockedToastAt = Date.now(); }
+      cur = null; rec = null; saving = false; setState(); renderList();
+      res();
+    };
+    r.stop();
+  });
+}
+
+/* ---------- Tra cứu ---------- */
+async function renderList() {
+  const q = $('q').value.trim().toUpperCase();
+  const metas = (await allMeta()).sort((a, b) => b.startedAt - a.startedAt);
+  const hit = q ? metas.filter(m => m.code.includes(q)) : metas;
+  const today = dayKey(Date.now());
+  const list = $('list'); list.textContent = '';
+  if (!hit.length) { const p = document.createElement('p'); p.className = 'note'; p.textContent = q ? 'Không có video nào cho mã "' + q + '".' : 'Chưa có video nào.'; list.appendChild(p); }
+  let lastDay = '';
+  for (const m of hit.slice(0, 300)) {
+    const d = dayKey(m.startedAt);
+    if (d !== lastDay) { lastDay = d; const h = document.createElement('div'); h.className = 'day'; h.textContent = (d === today ? 'Hôm nay – ' : '') + d.split('-').reverse().join('/'); list.appendChild(h); }
+    const it = document.createElement('div'); it.className = 'item';
+    const box = document.createElement('div'), b = document.createElement('b'), s = document.createElement('small'), go = document.createElement('span');
+    b.textContent = m.code;
+    s.textContent = stamp(new Date(m.startedAt)).slice(11) + ' · ' + fmtDur(m.durationMs) + ' · ' + fmtSize(m.size);
+    go.className = 'go'; go.textContent = '▶';
+    box.append(b, s); it.append(box, go); it.onclick = () => openPlayer(m); list.appendChild(it);
+  }
+  let u = metas.length + ' video · ' + fmtSize(metas.reduce((a, m) => a + m.size, 0));
+  try { const est = await navigator.storage.estimate(); if (est.quota) u += ' · đã dùng ' + Math.round(est.usage / est.quota * 100) + '% bộ nhớ cho phép'; } catch (e) {}
+  $('usage').textContent = u;
+}
+let pMeta = null, pBlob = null, pUrl = '';
+function fileName(m) { return m.code + '_' + stamp(new Date(m.startedAt)).replace(/[-:]/g, '').replace(' ', '-') + (m.mime.includes('mp4') ? '.mp4' : '.webm'); }
+async function openPlayer(m) {
+  pBlob = await getBlob(m.id);
+  if (!pBlob) { toast('Không đọc được video này.'); return; }
+  pMeta = m; pUrl = URL.createObjectURL(pBlob);
+  $('pv').src = pUrl; $('pTitle').textContent = m.code + ' · ' + stamp(new Date(m.startedAt));
+  $('player').style.display = 'flex';
+}
+function closePlayer() { $('pv').pause(); $('pv').removeAttribute('src'); $('pv').load(); URL.revokeObjectURL(pUrl); $('player').style.display = 'none'; pMeta = pBlob = null; }
+$('pClose').onclick = closePlayer;
+$('pSave').onclick = () => { const a = document.createElement('a'); a.href = pUrl; a.download = fileName(pMeta); document.body.appendChild(a); a.click(); a.remove(); };
+$('pShare').onclick = async () => {
+  const f = new File([pBlob], fileName(pMeta), {type: pBlob.type});
+  if (navigator.canShare && navigator.canShare({files: [f]})) { try { await navigator.share({files: [f], title: 'Video đóng gói ' + pMeta.code}); } catch (e) {} }
+  else toast('Máy này không chia sẻ trực tiếp được. Bấm "Tải về" rồi gửi file.', 4000);
+};
+$('pDel').onclick = async () => { if (await ask('Xoá video đơn ' + pMeta.code + '?')) { await delVideo(pMeta.id); closePlayer(); renderList(); } };
+$('q').oninput = renderList;
+$('btnScanFind').onclick = () => {
+  if (cur) { toast('Đang quay một đơn. Bấm "Dừng & lưu" trước rồi mới quét để tìm.', 3500); return; }
+  findMode = true; lastSeen = ''; showTab('rec'); setState();
+};
+
+/* ---------- Nút bấm ---------- */
+$('btnStop').onclick = () => stopAndSave(true).then(() => toast('Đã lưu.'));
+$('btnManual').onclick = async () => {
+  const v = (await ask('Nhập mã vận đơn:', true)).toUpperCase();
+  if (!v) return;
+  if (!CODE_RE.test(v)) { toast('Mã phải gồm 8–30 ký tự chữ hoặc số.'); return; }
+  findMode = false;
+  if (cur) await stopAndSave();
+  startRec(v);
+};
+function showTab(name) {
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
+  document.querySelectorAll('section').forEach(s => s.classList.toggle('on', s.id === 'tab-' + name));
+  if (name === 'find') renderList();
+  if (name !== 'rec' && findMode) { findMode = false; setState(); }
+}
+document.querySelectorAll('nav button').forEach(b => { b.onclick = () => showTab(b.dataset.tab); });
+
+/* ---------- Màn Cài đặt ---------- */
+function fillSettings() {
+  $('sShop').value = cfg.shop; $('sRes').value = cfg.res; $('sKeep').value = cfg.keepDays; $('sMax').value = cfg.maxMin; $('sQR').checked = cfg.acceptQR;
+  $('about').textContent = 'Bộ đọc mã: ' + engine + ' · Định dạng video: ' + (pickMime().split(';')[0] || 'không hỗ trợ');
+}
+$('sLogo').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const im = new Image();
+  im.onload = () => { // thu nhỏ logo để lưu gọn
+    const k = Math.min(1, 240 / im.height), c = document.createElement('canvas');
+    c.width = Math.round(im.width * k); c.height = Math.round(im.height * k);
+    c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+    cfg.logo = c.toDataURL('image/png'); saveCfg(); loadLogo(); URL.revokeObjectURL(im.src);
+  };
+  im.src = URL.createObjectURL(f);
+};
+$('sLogoDel').onclick = () => { cfg.logo = ''; saveCfg(); loadLogo(); $('sLogo').value = ''; };
+$('sSave').onclick = async () => {
+  if (cur) { toast('Đang quay một đơn. Dừng & lưu trước khi đổi cài đặt.', 3500); return; }
+  const oldRes = cfg.res, oldQR = cfg.acceptQR;
+  cfg.shop = $('sShop').value.trim(); cfg.res = $('sRes').value;
+  cfg.keepDays = Math.min(365, Math.max(1, parseInt($('sKeep').value, 10) || DEF.keepDays));
+  cfg.maxMin = Math.min(60, Math.max(1, parseInt($('sMax').value, 10) || DEF.maxMin));
+  cfg.acceptQR = $('sQR').checked; saveCfg();
+  if (oldQR !== cfg.acceptQR) await initScanner();
+  if (oldRes !== cfg.res) await startCamera();
+  await cleanup(); fillSettings(); toast('Đã lưu cài đặt.');
+};
+
+/* ---------- Giữ màn hình sáng + cảnh báo khi rời trang lúc đang quay ---------- */
+let wake = null;
+async function keepAwake() { try { if ('wakeLock' in navigator && !document.hidden) wake = await navigator.wakeLock.request('screen'); } catch (e) {} }
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { if (cur) stopAndSave(true); }   // rời app: lưu ngay đơn đang quay để khỏi mất
+  else keepAwake();
+});
+window.addEventListener('beforeunload', e => { if (cur) { e.preventDefault(); e.returnValue = ''; } });
+
+/* ---------- Khởi động ---------- */
+(async function init() {
+  loadLogo();
+  try { await openDB(); } catch (e) { toast('Không mở được kho lưu video trên máy này.', 8000); return; }
+  try { navigator.storage && navigator.storage.persist && await navigator.storage.persist(); } catch (e) {}
+  await initScanner();
+  fillSettings();
+  const n = await cleanup();
+  if (n) toast('Đã tự xoá ' + n + ' video cũ.');
+  await startCamera();
+  keepAwake();
+  requestAnimationFrame(draw);
+  setInterval(scanTick, 250);
+  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+})();
+</script>
+</body>
+</html>
