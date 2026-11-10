@@ -26,6 +26,9 @@ section.on{display:flex}
 #state{font-weight:700;font-size:18px;margin-bottom:8px;min-height:25px;word-break:break-all}
 #state.rec{color:#ff6b6b}
 #state.find{color:var(--amber)}
+#diag{color:var(--mute);font-size:12px;margin:-4px 0 8px;min-height:16px;word-break:break-all}
+#guide{position:absolute;border:3px dashed rgba(255,193,7,.9);border-radius:10px;pointer-events:none;display:none}
+#guide span{position:absolute;left:0;right:0;top:-26px;text-align:center;color:#ffc107;font-size:13px;font-weight:600;text-shadow:0 0 3px #000}
 .row{display:flex;gap:8px}
 .btn{flex:1;padding:14px 10px;border:0;border-radius:10px;background:#34403a;color:#fff;font-weight:600}
 .btn.red{background:var(--red)}
@@ -69,9 +72,11 @@ section.on{display:flex}
       <canvas id="view" width="1280" height="720"></canvas>
       <video id="cam" playsinline muted style="display:none"></video>
       <div id="camErr"></div>
+      <div id="guide"><span>Đặt mã vạch vào khung này</span></div>
     </div>
     <div class="bar">
       <div id="state">Đang mở camera…</div>
+      <div id="diag"></div>
       <div class="row">
         <button class="btn" id="btnManual">Nhập mã tay</button>
         <button class="btn red" id="btnStop" disabled>Dừng &amp; lưu</button>
@@ -235,16 +240,22 @@ let camReady = false, camStream = null;
 async function startCamera() {
   camReady = false;
   if (camStream) camStream.getTracks().forEach(t => t.stop());
-  const h = cfg.res === '1080' ? 1080 : 720, w = Math.round(h * 16 / 9);
   try {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('NO_API');
-    camStream = await navigator.mediaDevices.getUserMedia({audio: false, video: {facingMode: {ideal: 'environment'}, width: {ideal: w}, height: {ideal: h}, frameRate: {ideal: 30}}});
+    // Luôn lấy hình camera ở 1080p để đọc mã cho rõ; video lưu ra thì thu về độ phân giải trong Cài đặt
+    camStream = await navigator.mediaDevices.getUserMedia({audio: false, video: {facingMode: {ideal: 'environment'}, width: {ideal: 1920}, height: {ideal: 1080}, frameRate: {ideal: 30}}});
+    const track = camStream.getVideoTracks()[0];
+    try { // bật lấy nét liên tục nếu máy hỗ trợ (tem ở gần mới nét)
+      const cap = track.getCapabilities ? track.getCapabilities() : {};
+      if (cap.focusMode && cap.focusMode.includes('continuous')) await track.applyConstraints({advanced: [{focusMode: 'continuous'}]});
+    } catch (e) {}
     cam.srcObject = camStream;
     await cam.play();
-    view.width = cam.videoWidth; view.height = cam.videoHeight;
+    const outH = cfg.res === '1080' ? 1080 : 720, k = Math.min(1, outH / Math.min(cam.videoWidth, cam.videoHeight));
+    view.width = Math.round(cam.videoWidth * k); view.height = Math.round(cam.videoHeight * k);
     camReady = true;
     $('camErr').style.display = 'none';
-    setState();
+    placeGuide(); setState(); showDiag();
   } catch (e) {
     const el = $('camErr'); el.style.display = 'flex';
     el.textContent = e.message === 'NO_API' || !window.isSecureContext
@@ -253,6 +264,15 @@ async function startCamera() {
     $('state').textContent = 'Chưa có camera';
   }
 }
+/* Khung vàng "vùng quét" ở giữa hình: chỉ hiện trên màn hình, không in vào video */
+const ZONE = {x: 0.15, y: 0.2, w: 0.7, h: 0.6};
+function placeGuide() {
+  const g = $('guide');
+  if (!camReady || !$('tab-rec').classList.contains('on')) { g.style.display = 'none'; return; }
+  const r = view.getBoundingClientRect(), s = view.parentElement.getBoundingClientRect();
+  Object.assign(g.style, {display: 'block', left: (r.left - s.left + r.width * ZONE.x) + 'px', top: (r.top - s.top + r.height * ZONE.y) + 'px', width: (r.width * ZONE.w) + 'px', height: (r.height * ZONE.h) + 'px'});
+}
+window.addEventListener('resize', placeGuide);
 function outlined(text, x, y, align) {
   ctx.textAlign = align; ctx.lineJoin = 'round';
   ctx.strokeStyle = 'rgba(0,0,0,.85)'; ctx.strokeText(text, x, y);
@@ -277,67 +297,104 @@ function draw() {
   }
 }
 
-/* ---------- Đọc mã: dùng bộ đọc sẵn của Chrome, không có thì dùng ZXing kèm theo ---------- */
+/* ---------- Đọc mã: dùng cả bộ đọc sẵn của Chrome và ZXing kèm theo, luân phiên ---------- */
 const ONE_D = ['code_128', 'code_39', 'code_93', 'itf', 'codabar'];
 const CODE_RE = /^[A-Z0-9][A-Z0-9\-]{7,29}$/i;   // mã vận đơn: 8–30 ký tự chữ/số
-let native = null, zx = null, zxCanvas = null, zxTurn = 0, engine = '';
+let native = null, zx = null, engine = '', scanTurn = 0;
+const crop = document.createElement('canvas'), cropCtx = crop.getContext('2d', {willReadFrequently: true});
+const full = document.createElement('canvas'), fullCtx = full.getContext('2d', {willReadFrequently: true});
+const rotC = document.createElement('canvas'), rotCtx = rotC.getContext('2d', {willReadFrequently: true});
 async function initScanner() {
   native = null; zx = null;
+  const names = [];
   if ('BarcodeDetector' in window) {
     try {
       const sup = await BarcodeDetector.getSupportedFormats();
       const want = ONE_D.concat(cfg.acceptQR ? ['qr_code'] : []).filter(f => sup.includes(f));
-      if (want.includes('code_128')) { native = new BarcodeDetector({formats: want}); engine = 'Chrome'; return; }
+      if (want.includes('code_128')) { native = new BarcodeDetector({formats: want}); names.push('Chrome'); }
     } catch (e) {}
   }
   const Z = window.ZXing, hints = new Map();
   const fm = [Z.BarcodeFormat.CODE_128, Z.BarcodeFormat.CODE_39, Z.BarcodeFormat.CODE_93, Z.BarcodeFormat.ITF, Z.BarcodeFormat.CODABAR];
   if (cfg.acceptQR) fm.push(Z.BarcodeFormat.QR_CODE);
   hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, fm); hints.set(Z.DecodeHintType.TRY_HARDER, true);
-  zx = new Z.MultiFormatReader(); zx.setHints(hints);
-  zxCanvas = document.createElement('canvas'); engine = 'ZXing';
+  zx = new Z.MultiFormatReader(); zx.setHints(hints); names.push('ZXing');
+  engine = names.join(' + ');
 }
-async function detectOnce() {
-  if (native) {
-    const rs = await native.detect(cam);
-    let best = null, bestScore = -1;
-    for (const r of rs) {
-      const v = (r.rawValue || '').trim();
-      if (!CODE_RE.test(v)) continue;
-      const b = r.boundingBox || {width: 0, height: 0};
-      // ưu tiên mã vạch hơn QR, rồi tới mã to nhất trong hình (mã vận đơn chính)
-      const score = (r.format === 'qr_code' ? 0 : 1e9) + b.width * b.height;
-      if (score > bestScore) { bestScore = score; best = v; }
-    }
-    return best;
+/* Cắt vùng quét ở độ phân giải gốc của camera: mã vạch to hơn hẳn so với đọc cả khung hình */
+function grabZone() {
+  const vw = cam.videoWidth, vh = cam.videoHeight;
+  const sx = Math.round(vw * ZONE.x), sy = Math.round(vh * ZONE.y), sw = Math.round(vw * ZONE.w), sh = Math.round(vh * ZONE.h);
+  if (crop.width !== sw || crop.height !== sh) { crop.width = sw; crop.height = sh; }
+  cropCtx.drawImage(cam, sx, sy, sw, sh, 0, 0, sw, sh);
+  return crop;
+}
+async function nativeRead(src) {
+  const rs = await native.detect(src);
+  let best = null, bestScore = -1;
+  for (const r of rs) {
+    const v = (r.rawValue || '').trim();
+    noteRaw(v);
+    if (!CODE_RE.test(v)) continue;
+    const b = r.boundingBox || {width: 0, height: 0};
+    // ưu tiên mã vạch hơn QR, rồi tới mã to nhất (mã vận đơn chính)
+    const score = (r.format === 'qr_code' ? 0 : 1e9) + b.width * b.height;
+    if (score > bestScore) { bestScore = score; best = v; }
   }
-  // ZXing: lượt chẵn đọc hình thẳng, lượt lẻ xoay 90° để đọc tem đặt dọc
-  const vw = cam.videoWidth, vh = cam.videoHeight, rot = (zxTurn++ % 2) === 1;
-  zxCanvas.width = rot ? vh : vw; zxCanvas.height = rot ? vw : vh;
-  const c = zxCanvas.getContext('2d', {willReadFrequently: true});
-  if (rot) { c.translate(vh, 0); c.rotate(Math.PI / 2); }
-  c.drawImage(cam, 0, 0, vw, vh);
+  return best;
+}
+function zxRead(src, rot) {
+  let c = src;
+  if (rot) { // xoay 90° để đọc tem đặt dọc
+    if (rotC.width !== src.height || rotC.height !== src.width) { rotC.width = src.height; rotC.height = src.width; }
+    rotCtx.setTransform(1, 0, 0, 1, 0, 0); rotCtx.translate(src.height, 0); rotCtx.rotate(Math.PI / 2); rotCtx.drawImage(src, 0, 0);
+    c = rotC;
+  }
   try {
     const Z = window.ZXing;
-    const bmp = new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(zxCanvas)));
-    const v = zx.decodeWithState(bmp).getText().trim();
+    const v = zx.decodeWithState(new Z.BinaryBitmap(new Z.HybridBinarizer(new Z.HTMLCanvasElementLuminanceSource(c)))).getText().trim();
+    noteRaw(v);
     return CODE_RE.test(v) ? v : null;
-  } catch (e) { return null; }
+  } catch (e) { return null; } finally { zx.reset(); }
+}
+async function detectOnce() {
+  const z = grabZone();
+  // Mỗi lượt một cách đọc, xoay vòng: vùng quét (phóng to, đọc tem nhỏ) xen kẽ cả khung hình (tem to, tem lệch khung),
+  // ZXing đọc cả chiều ngang lẫn chiều dọc; bộ đọc của Chrome tự xoay nên không cần
+  const steps = native ? ['nz', 'zz', 'nf', 'zr', 'nz', 'zf', 'nf', 'zfr'] : ['zz', 'zr', 'zf', 'zfr'];
+  const step = steps[scanTurn++ % steps.length];
+  if (step === 'nz') return nativeRead(z);
+  if (step === 'nf') return nativeRead(cam);
+  if (step === 'zz' || step === 'zr') return zxRead(z, step === 'zr');
+  const vw = cam.videoWidth, vh = cam.videoHeight;
+  if (full.width !== vw || full.height !== vh) { full.width = vw; full.height = vh; }
+  fullCtx.drawImage(cam, 0, 0, vw, vh);
+  return zxRead(full, step === 'zfr');
+}
+/* Dòng chẩn đoán dưới nút: cho biết phần mềm đang đọc được gì */
+let lastRaw = '', lastRawAt = 0, scans = 0;
+function noteRaw(v) { if (v) { lastRaw = v; lastRawAt = Date.now(); } }
+function showDiag() {
+  let t = 'Bộ đọc: ' + engine + ' · Camera ' + cam.videoWidth + '×' + cam.videoHeight + ' · ' + scans + ' lượt dò';
+  if (lastRaw) t += ' · Đọc gần nhất: ' + lastRaw + (CODE_RE.test(lastRaw) ? '' : ' (không giống mã vận đơn, bỏ qua)') + ' lúc ' + stamp(new Date(lastRawAt)).slice(11);
+  else if (camReady) t += ' · Chưa đọc được mã nào';
+  $('diag').textContent = t;
 }
 let scanBusy = false, lastSeen = '', lastSeenAt = 0;
 async function scanTick() {
-  if (!camReady || scanBusy || saving || document.hidden) return;
+  if (!camReady || scanBusy || saving || document.hidden || !cam.videoWidth) return;
   scanBusy = true;
   try {
-    const v = await detectOnce();
+    const v = await detectOnce(); scans++;
     if (v) {
-      // phải đọc ra cùng một mã 2 lần liên tiếp mới nhận, tránh đọc nhầm
-      const ok = v === lastSeen && Date.now() - lastSeenAt < 2000;
+      // phải đọc ra cùng một mã 2 lần trong 3 giây mới nhận, tránh đọc nhầm
+      const ok = v === lastSeen && Date.now() - lastSeenAt < 3000;
       lastSeen = v; lastSeenAt = Date.now();
       if (ok) await onCode(v.toUpperCase());
     }
-  } catch (e) {} finally { scanBusy = false; }
+  } catch (e) { $('diag').textContent = 'Lỗi bộ đọc: ' + (e && (e.name + ' ' + e.message)); } finally { scanBusy = false; }
 }
+setInterval(() => { if (camReady) showDiag(); }, 700);
 
 /* ---------- Quay theo đơn ---------- */
 let cur = null, rec = null, chunks = [], saving = false, blocked = '', blockedToastAt = 0, findMode = false, maxTimer = null;
@@ -459,6 +516,7 @@ function showTab(name) {
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
   document.querySelectorAll('section').forEach(s => s.classList.toggle('on', s.id === 'tab-' + name));
   if (name === 'find') renderList();
+  setTimeout(placeGuide, 0);
   if (name !== 'rec' && findMode) { findMode = false; setState(); }
 }
 document.querySelectorAll('nav button').forEach(b => { b.onclick = () => showTab(b.dataset.tab); });
@@ -466,7 +524,7 @@ document.querySelectorAll('nav button').forEach(b => { b.onclick = () => showTab
 /* ---------- Màn Cài đặt ---------- */
 function fillSettings() {
   $('sShop').value = cfg.shop; $('sRes').value = cfg.res; $('sKeep').value = cfg.keepDays; $('sMax').value = cfg.maxMin; $('sQR').checked = cfg.acceptQR;
-  $('about').textContent = 'Bộ đọc mã: ' + engine + ' · Định dạng video: ' + (pickMime().split(';')[0] || 'không hỗ trợ');
+  $('about').textContent = 'Phiên bản 0.2 · Bộ đọc mã: ' + engine + ' · Định dạng video: ' + (pickMime().split(';')[0] || 'không hỗ trợ');
 }
 $('sLogo').onchange = e => {
   const f = e.target.files[0]; if (!f) return;
@@ -513,7 +571,7 @@ window.addEventListener('beforeunload', e => { if (cur) { e.preventDefault(); e.
   await startCamera();
   keepAwake();
   requestAnimationFrame(draw);
-  setInterval(scanTick, 250);
+  setInterval(scanTick, 200);
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
 })();
 </script>
